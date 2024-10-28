@@ -11,6 +11,8 @@ import (
 	"gorm.io/gorm/schema"
 )
 
+var ErrDuckDBNotSupported = errors.New("DuckDB are not supported this operation")
+
 type Migrator struct {
 	migrator.Migrator
 	Dialector
@@ -255,9 +257,14 @@ func (m Migrator) RenameColumn(dst interface{}, oldName, field string) error {
 // TODO: Implement below function.
 // ColumnTypes(dst interface{}) ([]ColumnType, error)
 
-// // Views
-// CreateView(name string, option ViewOption) error
-// DropView(name string) error
+// Views
+func (m Migrator) CreateView(name string, option gorm.ViewOption) error {
+	return ErrDuckDBNotSupported
+}
+
+func (m Migrator) DropView(name string) error {
+	return ErrDuckDBNotSupported
+}
 
 // // Constraints
 // CreateConstraint(dst interface{}, name string) error
