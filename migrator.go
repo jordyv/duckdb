@@ -15,7 +15,6 @@ var ErrDuckDBNotSupported = errors.New("DuckDB are not supported this operation"
 
 type Migrator struct {
 	migrator.Migrator
-	Dialector
 }
 
 // Database

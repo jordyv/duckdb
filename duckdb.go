@@ -8,6 +8,7 @@ import (
 
 	_ "github.com/marcboeker/go-duckdb"
 	"gorm.io/gorm"
+	"gorm.io/gorm/callbacks"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/migrator"
@@ -27,7 +28,7 @@ type Config struct {
 }
 
 func Open(dsn string) gorm.Dialector {
-	return &Dialector{Config: &Config{DSN: dsn}}
+	return &Dialector{&Config{DSN: dsn}}
 }
 
 func New(config Config) gorm.Dialector {
@@ -43,14 +44,20 @@ func (dialector Dialector) Initialize(db *gorm.DB) (err error) {
 		dialector.DriverName = DriverName
 	}
 
-	if dialector.Config.Conn != nil {
-		db.ConnPool = dialector.Config.Conn
+	callbackConfig := &callbacks.Config{
+		CreateClauses: []string{"INSERT", "VALUES", "ON CONFLICT"},
+		UpdateClauses: []string{"UPDATE", "SET", "FROM", "WHERE"},
+		DeleteClauses: []string{"DELETE", "FROM", "WHERE"},
+	}
+	callbacks.RegisterDefaultCallbacks(db, callbackConfig)
+
+	if dialector.Conn != nil {
+		db.ConnPool = dialector.Conn
 	} else {
-		conn, err := sql.Open(dialector.DriverName, dialector.Config.DSN)
+		db.ConnPool, err = sql.Open(dialector.DriverName, dialector.Config.DSN)
 		if err != nil {
 			return err
 		}
-		db.ConnPool = conn
 	}
 
 	var version string
@@ -116,15 +123,11 @@ func (dialector Dialector) DefaultValueOf(field *schema.Field) clause.Expression
 }
 
 func (dialector Dialector) Migrator(db *gorm.DB) gorm.Migrator {
-	return Migrator{
-		Migrator: migrator.Migrator{
-			Config: migrator.Config{
-				DB:        db,
-				Dialector: &dialector,
-			},
-		},
-		Dialector: dialector,
-	}
+	return Migrator{migrator.Migrator{Config: migrator.Config{
+		DB:                          db,
+		Dialector:                   dialector,
+		CreateIndexAfterCreateTable: true,
+	}}}
 }
 
 func (dialector Dialector) DataTypeOf(field *schema.Field) string {
