@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"strings"
 
 	_ "github.com/marcboeker/go-duckdb"
 	"gorm.io/gorm"
@@ -44,12 +45,7 @@ func (dialector Dialector) Initialize(db *gorm.DB) (err error) {
 		dialector.DriverName = DriverName
 	}
 
-	callbackConfig := &callbacks.Config{
-		CreateClauses: []string{"INSERT", "VALUES", "ON CONFLICT"},
-		UpdateClauses: []string{"UPDATE", "SET", "FROM", "WHERE"},
-		DeleteClauses: []string{"DELETE", "FROM", "WHERE"},
-	}
-	callbacks.RegisterDefaultCallbacks(db, callbackConfig)
+	callbacks.RegisterDefaultCallbacks(db, &callbacks.Config{})
 
 	if dialector.Conn != nil {
 		db.ConnPool = dialector.Conn
@@ -64,11 +60,6 @@ func (dialector Dialector) Initialize(db *gorm.DB) (err error) {
 	if err := db.ConnPool.QueryRowContext(context.Background(), "SELECT version()").Scan(&version); err != nil {
 		return err
 	}
-
-	// TODO: Implemet Callbacks
-	// callbacks.RegisterDefaultCallbacks(db, &callbacks.Config{
-	// 	LastInsertIDReversed: true,
-	// })
 
 	for k, v := range dialector.ClauseBuilders() {
 		db.ClauseBuilders[k] = v
@@ -135,19 +126,29 @@ func (dialector Dialector) DataTypeOf(field *schema.Field) string {
 	case schema.Bool:
 		return "boolean"
 	case schema.Int, schema.Uint:
-		sqlType := "hugeint"
-		switch {
-		case field.Size <= 2:
-			sqlType = "smallint"
-		case field.Size <= 4:
-			sqlType = "integer"
-		case field.Size <= 8:
-			sqlType = "bigint"
-		}
+		size := field.Size
 		if field.DataType == schema.Uint {
-			sqlType = "U" + sqlType
+			size++
 		}
-		return sqlType
+		if field.AutoIncrement {
+			switch {
+			case size <= 16:
+				return "smallint"
+			case size <= 32:
+				return "integer"
+			default:
+				return "bigint"
+			}
+		} else {
+			switch {
+			case size <= 16:
+				return "smallint"
+			case size <= 32:
+				return "integer"
+			default:
+				return "bigint"
+			}
+		}
 	case schema.Float:
 		if field.Precision > 0 {
 			if field.Scale > 0 {
@@ -155,12 +156,12 @@ func (dialector Dialector) DataTypeOf(field *schema.Field) string {
 			}
 			return fmt.Sprintf("numeric(%d)", field.Precision)
 		}
-		return "numeric"
+		return "decimal"
 	case schema.String:
 		if field.Size > 0 {
 			return fmt.Sprintf("varchar(%d)", field.Size)
 		}
-		return "varchar"
+		return "text"
 	case schema.Time:
 		if field.Precision > 0 {
 			return fmt.Sprintf("timestamptz(%d)", field.Precision)
@@ -168,37 +169,31 @@ func (dialector Dialector) DataTypeOf(field *schema.Field) string {
 		return "timestamptz"
 	case schema.Bytes:
 		return "blob"
-		// default:
-		// 	return dialector.getSchemaCustomType(field)
+	default:
+		return dialector.getSchemaCustomType(field)
 	}
-	return "hugeint"
 }
 
-// TODO: Implement the default action in 'DataTypeOf'
+func (dialector Dialector) getSchemaCustomType(field *schema.Field) string {
+	sqlType := string(field.DataType)
 
-// func (dialector Dialector) getSchemaCustomType(field *schema.Field) string {
-// 	sqlType := string(field.DataType)
-// 	if field.AutoIncrement && !strings.Contains(strings.ToLower(sqlType), "int") {
-// 		size := field.Size
-// 		if field.GORMDataType == schema.Uint {
-// 			sqlType = "U" + sqlType
-// 		}
-// 		switch {
-// 		case size <= 2:
-// 			sqlType = "smallint"
-// 		case size <= 4:
-// 			sqlType = "integer"
-// 		case size <= 8:
-// 			sqlType = "bigint"
-// 		default:
-// 			sqlType = "hugeint"
-// 		}
-// 		if field.DataType == schema.Uint {
-// 			sqlType = "U" + sqlType
-// 		}
-// 	}
-// 	return sqlType
-// }
+	if field.AutoIncrement && !strings.Contains(strings.ToLower(sqlType), "integer") {
+		size := field.Size
+		if field.GORMDataType == schema.Uint {
+			size++
+		}
+		switch {
+		case size <= 16:
+			sqlType = "smallint"
+		case size <= 32:
+			sqlType = "integer"
+		default:
+			sqlType = "bigint"
+		}
+	}
+
+	return sqlType
+}
 
 func (dialector Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement, v interface{}) {
 	writer.WriteByte('?')
@@ -216,7 +211,7 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 		case '`':
 			continuousBacktick++
 			if continuousBacktick == 2 {
-				writer.WriteString("``")
+				writer.WriteString("")
 				continuousBacktick = 0
 			}
 		case '.':
@@ -224,13 +219,13 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 				shiftDelimiter = 0
 				underQuoted = false
 				continuousBacktick = 0
-				writer.WriteString("`")
+				writer.WriteString("")
 			}
 			writer.WriteByte(v)
 			continue
 		default:
 			if shiftDelimiter-continuousBacktick <= 0 && !underQuoted {
-				writer.WriteString("`")
+				writer.WriteString("")
 				underQuoted = true
 				if selfQuoted = continuousBacktick > 0; selfQuoted {
 					continuousBacktick -= 1
@@ -238,7 +233,7 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 			}
 
 			for ; continuousBacktick > 0; continuousBacktick -= 1 {
-				writer.WriteString("``")
+				writer.WriteString("")
 			}
 
 			writer.WriteByte(v)
@@ -247,9 +242,9 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 	}
 
 	if continuousBacktick > 0 && !selfQuoted {
-		writer.WriteString("``")
+		writer.WriteString("")
 	}
-	writer.WriteString("`")
+	writer.WriteString("")
 }
 
 func (dialector Dialector) Explain(sql string, vars ...interface{}) string {

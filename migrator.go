@@ -40,6 +40,11 @@ func (m Migrator) CreateTable(values ...interface{}) (err error) {
 	if err = m.Migrator.CreateTable(values...); err != nil {
 		return
 	}
+	// if err = m.DB.Exec(
+	// 	"CREATE SEQUENCE serial",
+	// ).Error; err != nil {
+	// 	return
+	// }
 	for _, value := range m.ReorderModels(values, false) {
 		if err = m.RunWithValue(value, func(stmt *gorm.Statement) error {
 			if stmt.Schema != nil {
@@ -52,6 +57,11 @@ func (m Migrator) CreateTable(values ...interface{}) (err error) {
 						).Error; err != nil {
 							return err
 						}
+					}
+					if err := m.DB.Exec(
+						"CREATE SEQUENCE IF NOT EXISTS ?",
+						m.CurrentTable(stmt)).Error; err != nil {
+						return err
 					}
 				}
 			}
@@ -205,7 +215,7 @@ func (m Migrator) MigrateColumn(value interface{}, field *schema.Field, columnTy
 		checkSQL += "WHERE objsubid = (SELECT ordinal_position FROM information_schema.columns WHERE table_schema = ? AND table_name = ? AND column_name = ?) "
 		checkSQL += "AND objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = ? AND relnamespace = "
 		checkSQL += "(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = ?))"
-		m.DB.Raw(checkSQL, values...).Scan(&description)
+		m.DB.Raw(checkSQL, values...).Row().Scan(&description)
 
 		comment := strings.Trim(field.Comment, "'")
 		comment = strings.Trim(comment, `"`)
@@ -254,7 +264,7 @@ func (m Migrator) RenameColumn(dst interface{}, oldName, field string) error {
 }
 
 // TODO: Implement below function.
-// ColumnTypes(dst interface{}) ([]ColumnType, error)
+// func (m Migrator) ColumnTypes(value interface{}) (columnTypes []gorm.ColumnType, err error)
 
 // Views
 func (m Migrator) CreateView(name string, option gorm.ViewOption) error {
