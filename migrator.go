@@ -21,7 +21,7 @@ type Migrator struct {
 // Database
 
 func (m Migrator) CurrentDatabase() (name string) {
-	m.DB.Raw("SELECT CURRENT_DATABASE()").Row().Scan(&name)
+	m.DB.Raw("SELECT CURRENT_DATABASE()").Scan(&name)
 	return
 }
 
@@ -96,7 +96,7 @@ func (m Migrator) HasTable(value interface{}) bool {
 	var count int64
 	m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		currentSchema, curTable := m.CurrentSchema(stmt, stmt.Table)
-		return m.DB.Raw("SELECT count(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ? AND table_type = ?", currentSchema, curTable, "BASE TABLE").Row().Scan(&count)
+		return m.DB.Raw("SELECT count(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ? AND table_type = ?", currentSchema, curTable, "BASE TABLE").Scan(&count).Error
 	})
 	return count > 0
 }
@@ -136,7 +136,7 @@ func (m Migrator) RenameTable(oldName, newName interface{}) (err error) {
 
 func (m Migrator) GetTables() (tableList []string, err error) {
 	currentSchema, _ := m.CurrentSchema(m.DB.Statement, "")
-	return tableList, m.DB.Raw("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_type = ?", currentSchema, "BASE TABLE").Row().Scan(&tableList)
+	return tableList, m.DB.Raw("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_type = ?", currentSchema, "BASE TABLE").Scan(&tableList).Error
 }
 
 // Columns
@@ -206,7 +206,7 @@ func (m Migrator) MigrateColumn(value interface{}, field *schema.Field, columnTy
 		checkSQL += "WHERE objsubid = (SELECT ordinal_position FROM information_schema.columns WHERE table_schema = ? AND table_name = ? AND column_name = ?) "
 		checkSQL += "AND objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = ? AND relnamespace = "
 		checkSQL += "(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = ?))"
-		m.DB.Raw(checkSQL, values...).Row().Scan(&description)
+		m.DB.Raw(checkSQL, values...).Scan(&description)
 
 		comment := strings.Trim(field.Comment, "'")
 		comment = strings.Trim(comment, `"`)
@@ -266,13 +266,104 @@ func (m Migrator) DropView(name string) error {
 	return ErrDuckDBNotSupported
 }
 
-// // Constraints
-// CreateConstraint(dst interface{}, name string) error
-// DropConstraint(dst interface{}, name string) error
-// HasConstraint(dst interface{}, name string) bool
+// Constraints
 
-// // Indexes
-// CreateIndex(dst interface{}, name string) error
-// DropIndex(dst interface{}, name string) error
-// HasIndex(dst interface{}, name string) bool
-// RenameIndex(dst interface{}, oldName, newName string) error
+// WARNING: Constraints have a strong impact on performance:
+// they slow down loading and updates but speed up certain queries.
+// https://duckdb.org/docs/guides/performance/schema.html#constraints
+
+func (m Migrator) HasConstraint(value interface{}, name string) bool {
+	var count int64
+	m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		constraint, table := m.GuessConstraintInterfaceAndTable(stmt, name)
+		if constraint != nil {
+			name = constraint.GetName()
+		}
+		currentSchema, curTable := m.CurrentSchema(stmt, table)
+
+		return m.DB.Raw(
+			"SELECT count(*) FROM INFORMATION_SCHEMA.table_constraints WHERE table_schema = ? AND table_name = ? AND constraint_name = ?",
+			currentSchema, curTable, name,
+		).Scan(&count).Error
+	})
+
+	return count > 0
+}
+
+// https://duckdb.org/docs/sql/statements/alter_table.html#add--drop-constraint
+func (m Migrator) DropConstraint(dst interface{}, name string) error {
+	return ErrDuckDBNotSupported
+}
+
+// TODO: Implement below function.
+// func (m Migrator) CreateConstraint(value interface{}, name string) error {}
+
+// Indexes
+
+func (m Migrator) CreateIndex(value interface{}, name string) error {
+	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		if stmt.Schema != nil {
+			if idx := stmt.Schema.LookIndex(name); idx != nil {
+				opts := m.BuildIndexOptions(idx.Fields, stmt)
+				values := []interface{}{clause.Column{Name: idx.Name}, m.CurrentTable(stmt), opts}
+
+				createIndexSQL := "CREATE "
+				if idx.Class != "" {
+					createIndexSQL += idx.Class + " "
+				}
+				createIndexSQL += "INDEX IF NOT EXISTS ? ON ?"
+
+				if idx.Type != "" {
+					createIndexSQL += " USING " + idx.Type + "(?)"
+				} else {
+					createIndexSQL += " ?"
+				}
+
+				err := m.DB.Exec(createIndexSQL, values...).Error
+				if err != nil {
+					return err
+				}
+
+				if !m.HasIndex(value, name) {
+					return fmt.Errorf("failed to create index with name %v", name)
+				}
+				return nil
+			}
+		}
+
+		return fmt.Errorf("failed to create index with name %v", name)
+	})
+}
+
+func (m Migrator) DropIndex(value interface{}, name string) error {
+	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		if stmt.Schema != nil {
+			if idx := stmt.Schema.LookIndex(name); idx != nil {
+				name = idx.Name
+			}
+		}
+
+		return m.DB.Exec("DROP INDEX IF EXISTS ?", clause.Column{Name: name}).Error
+	})
+}
+
+func (m Migrator) RenameIndex(dst interface{}, oldName, newName string) error {
+	return ErrDuckDBNotSupported
+}
+
+func (m Migrator) HasIndex(value interface{}, name string) bool {
+	var count int64
+	m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		if stmt.Schema != nil {
+			if idx := stmt.Schema.LookIndex(name); idx != nil {
+				name = idx.Name
+			}
+		}
+		currentSchema, curTable := m.CurrentSchema(stmt, stmt.Table)
+		return m.DB.Raw(
+			"SELECT count(*) FROM pg_indexes WHERE tablename = ? AND indexname = ? AND schemaname = ?", curTable, name, currentSchema,
+		).Scan(&count).Error
+	})
+
+	return count > 0
+}
