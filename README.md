@@ -28,8 +28,25 @@ import (
   "gorm.io/gorm"
 )
 
-// duckdb extentions: .ddb, .duckdb, .db
-db, err := gorm.Open(duckdb.Open("duckdb.ddb"), &gorm.Config{})
+type Product struct {
+	gorm.Model
+	Code  string
+	Price uint
+}
+
+func main() {
+	// duckdb extentions: .ddb, .duckdb, .db
+  db, err := gorm.Open(duckdb.Open("duckdb.ddb"), &gorm.Config{})
+	if err != nil {
+		panic("failed to connect database")
+	}
+
+	// Migrate the schema
+	db.AutoMigrate(&Product{})
+
+	// Create
+	db.Create(&Product{Code: "D42", Price: 100})
+}
 ```
 
 Checkout [https://gorm.io](https://gorm.io) for details.
