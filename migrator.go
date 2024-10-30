@@ -3,6 +3,7 @@ package duckdb
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"gorm.io/gorm"
@@ -15,6 +16,10 @@ var ErrDuckDBNotSupported = errors.New("DuckDB are not supported this operation"
 
 type Migrator struct {
 	migrator.Migrator
+}
+
+type BuildIndexOptionsInterface interface {
+	BuildIndexOptions([]schema.IndexOption, *gorm.Statement) []interface{}
 }
 
 // Database
@@ -36,15 +41,160 @@ func (m Migrator) FullDataTypeOf(field *schema.Field) clause.Expr {
 
 // Tables
 
-func (m Migrator) CreateTable(values ...interface{}) (err error) {
-	if err = m.Migrator.CreateTable(values...); err != nil {
-		return
+func (m Migrator) createSequence(values ...interface{}) error {
+	for _, value := range m.ReorderModels(values, false) {
+		if err := m.RunWithValue(value, func(stmt *gorm.Statement) error {
+			if stmt.Schema != nil {
+				for range stmt.Schema.DBNames {
+					if execErr := m.DB.Exec(
+						"CREATE SEQUENCE IF NOT EXISTS ?",
+						m.CurrentTable(stmt)).Error; execErr != nil {
+						return execErr
+					}
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
-	// if err = m.DB.Exec(
-	// 	"CREATE SEQUENCE serial",
-	// ).Error; err != nil {
-	// 	return
-	// }
+	return nil
+}
+
+func (m Migrator) CreateTable(values ...interface{}) (err error) {
+
+	if err := m.createSequence(values...); err != nil {
+		return err
+	}
+
+	for _, value := range m.ReorderModels(values, false) {
+		tx := m.DB.Session(&gorm.Session{})
+		if err := m.RunWithValue(value, func(stmt *gorm.Statement) (err error) {
+
+			if stmt.Schema == nil {
+				return errors.New("failed to get schema")
+			}
+
+			var (
+				createTableSQL          = "CREATE TABLE ? ("
+				values                  = []interface{}{m.CurrentTable(stmt)}
+				hasPrimaryKeyInDataType bool
+			)
+
+			for _, dbName := range stmt.Schema.DBNames {
+				field := stmt.Schema.FieldsByDBName[dbName]
+				if !field.IgnoreMigration {
+					if dbName == "id" {
+						// fmt.Println("In ID: DBNAME" + dbName)
+						// createTableSQL += "? ? ? ?"
+						s := "{products  %!s(bool=false)}"
+						re := regexp.MustCompile(`\{([^ ]+)`)
+						match := re.FindStringSubmatch(s)
+						pk := fmt.Sprintf("? ? DEFAULT nextval('%s')", match[1])
+						// fmt.Println(pk) // Output: DEFAULT nextval('products') ?,
+						createTableSQL += pk
+
+					} else {
+						createTableSQL += "? ?"
+					}
+					hasPrimaryKeyInDataType = hasPrimaryKeyInDataType || strings.Contains(strings.ToUpper(m.DataTypeOf(field)), "PRIMARY KEY")
+					values = append(values, clause.Column{Name: dbName}, m.DB.Migrator().FullDataTypeOf(field))
+					createTableSQL += ","
+				}
+			}
+
+			// if !hasPrimaryKeyInDataType && len(stmt.Schema.PrimaryFields) > 0 {
+			// 	s := "{products  %!s(bool=false)}"
+			// 	re := regexp.MustCompile(`\{([^ ]+)`)
+			// 	match := re.FindStringSubmatch(s)
+			// 	pk := fmt.Sprintf("DEFAULT nextval('%s') ?,", match[1])
+			// 	fmt.Println(pk) // Output: DEFAULT nextval('products') ?,
+			// 	createTableSQL += pk
+			// 	// createTableSQL += "PRIMARY KEY ?,"
+			// 	fmt.Println("Pahse 2" + createTableSQL)
+			// 	primaryKeys := make([]interface{}, 0, len(stmt.Schema.PrimaryFields))
+			// 	for _, field := range stmt.Schema.PrimaryFields {
+			// 		primaryKeys = append(primaryKeys, clause.Column{Name: field.DBName})
+			// 	}
+
+			// 	values = append(values, primaryKeys)
+			// }
+			if !hasPrimaryKeyInDataType && len(stmt.Schema.PrimaryFields) > 0 {
+				createTableSQL += "PRIMARY KEY ?,"
+				primaryKeys := make([]interface{}, 0, len(stmt.Schema.PrimaryFields))
+				for _, field := range stmt.Schema.PrimaryFields {
+					primaryKeys = append(primaryKeys, clause.Column{Name: field.DBName})
+				}
+
+				values = append(values, primaryKeys)
+			}
+
+			for _, idx := range stmt.Schema.ParseIndexes() {
+				if m.CreateIndexAfterCreateTable {
+					defer func(value interface{}, name string) {
+						if err == nil {
+							err = tx.Migrator().CreateIndex(value, name)
+						}
+					}(value, idx.Name)
+				} else {
+					if idx.Class != "" {
+						createTableSQL += idx.Class + " "
+					}
+					createTableSQL += "INDEX ? ?"
+
+					if idx.Comment != "" {
+						createTableSQL += fmt.Sprintf(" COMMENT '%s'", idx.Comment)
+					}
+
+					if idx.Option != "" {
+						createTableSQL += " " + idx.Option
+					}
+
+					createTableSQL += ","
+					values = append(values, clause.Column{Name: idx.Name}, tx.Migrator().(BuildIndexOptionsInterface).BuildIndexOptions(idx.Fields, stmt))
+				}
+			}
+
+			if !m.DB.DisableForeignKeyConstraintWhenMigrating && !m.DB.IgnoreRelationshipsWhenMigrating {
+				for _, rel := range stmt.Schema.Relationships.Relations {
+					if rel.Field.IgnoreMigration {
+						continue
+					}
+					if constraint := rel.ParseConstraint(); constraint != nil {
+						if constraint.Schema == stmt.Schema {
+							sql, vars := constraint.Build()
+							createTableSQL += sql + ","
+							values = append(values, vars...)
+						}
+					}
+				}
+			}
+
+			for _, uni := range stmt.Schema.ParseUniqueConstraints() {
+				createTableSQL += "CONSTRAINT ? UNIQUE (?),"
+				values = append(values, clause.Column{Name: uni.Name}, clause.Expr{SQL: stmt.Quote(uni.Field.DBName)})
+			}
+
+			for _, chk := range stmt.Schema.ParseCheckConstraints() {
+				createTableSQL += "CONSTRAINT ? CHECK (?),"
+				values = append(values, clause.Column{Name: chk.Name}, clause.Expr{SQL: chk.Constraint})
+			}
+
+			createTableSQL = strings.TrimSuffix(createTableSQL, ",")
+
+			createTableSQL += ")"
+
+			if tableOption, ok := m.DB.Get("gorm:table_options"); ok {
+				createTableSQL += fmt.Sprint(tableOption)
+			}
+
+			err = tx.Exec(createTableSQL, values...).Error
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	// return nil
 	for _, value := range m.ReorderModels(values, false) {
 		if err = m.RunWithValue(value, func(stmt *gorm.Statement) error {
 			if stmt.Schema != nil {
@@ -58,11 +208,11 @@ func (m Migrator) CreateTable(values ...interface{}) (err error) {
 							return err
 						}
 					}
-					if err := m.DB.Exec(
-						"CREATE SEQUENCE IF NOT EXISTS ?",
-						m.CurrentTable(stmt)).Error; err != nil {
-						return err
-					}
+					// if err := m.DB.Exec(
+					// 	"CREATE SEQUENCE IF NOT EXISTS ?",
+					// 	m.CurrentTable(stmt)).Error; err != nil {
+					// 	return err
+					// }
 				}
 			}
 			return nil
