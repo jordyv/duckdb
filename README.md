@@ -107,8 +107,8 @@ See [here](https://github.com/alifiroozi80/duckdb/blob/main/CONTRIBUTING.md) for
 
 ### Roadmap
 
-- [ ]: Support switch indexes between ART and Min-Max in the configuraion.
-- [ ]: Implement TODO functions:
+- [ ] Support switch indexes between ART and Min-Max in the configuraion.
+- [ ] Implement TODO functions:
 	- ColumnTypes
 	- CreateConstraint
 
