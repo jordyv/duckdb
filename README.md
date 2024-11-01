@@ -48,7 +48,7 @@ func main() {
 	// Create
 	db.Create(&Product{Code: "D42", Price: 100})
 
-    // Read
+        // Read
 	var product Product
 	db.First(&product, 1)                 // find product with integer primary key
 	db.First(&product, "code = ?", "D42") // find product with code D42
