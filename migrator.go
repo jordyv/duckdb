@@ -85,13 +85,10 @@ func (m Migrator) CreateTable(values ...interface{}) (err error) {
 				field := stmt.Schema.FieldsByDBName[dbName]
 				if !field.IgnoreMigration {
 					if dbName == "id" {
-						// fmt.Println("In ID: DBNAME" + dbName)
-						// createTableSQL += "? ? ? ?"
 						s := "{products  %!s(bool=false)}"
 						re := regexp.MustCompile(`\{([^ ]+)`)
 						match := re.FindStringSubmatch(s)
 						pk := fmt.Sprintf("? ? DEFAULT nextval('%s')", match[1])
-						// fmt.Println(pk) // Output: DEFAULT nextval('products') ?,
 						createTableSQL += pk
 
 					} else {
@@ -103,22 +100,6 @@ func (m Migrator) CreateTable(values ...interface{}) (err error) {
 				}
 			}
 
-			// if !hasPrimaryKeyInDataType && len(stmt.Schema.PrimaryFields) > 0 {
-			// 	s := "{products  %!s(bool=false)}"
-			// 	re := regexp.MustCompile(`\{([^ ]+)`)
-			// 	match := re.FindStringSubmatch(s)
-			// 	pk := fmt.Sprintf("DEFAULT nextval('%s') ?,", match[1])
-			// 	fmt.Println(pk) // Output: DEFAULT nextval('products') ?,
-			// 	createTableSQL += pk
-			// 	// createTableSQL += "PRIMARY KEY ?,"
-			// 	fmt.Println("Pahse 2" + createTableSQL)
-			// 	primaryKeys := make([]interface{}, 0, len(stmt.Schema.PrimaryFields))
-			// 	for _, field := range stmt.Schema.PrimaryFields {
-			// 		primaryKeys = append(primaryKeys, clause.Column{Name: field.DBName})
-			// 	}
-
-			// 	values = append(values, primaryKeys)
-			// }
 			if !hasPrimaryKeyInDataType && len(stmt.Schema.PrimaryFields) > 0 {
 				createTableSQL += "PRIMARY KEY ?,"
 				primaryKeys := make([]interface{}, 0, len(stmt.Schema.PrimaryFields))
@@ -194,7 +175,6 @@ func (m Migrator) CreateTable(values ...interface{}) (err error) {
 			return err
 		}
 	}
-	// return nil
 	for _, value := range m.ReorderModels(values, false) {
 		if err = m.RunWithValue(value, func(stmt *gorm.Statement) error {
 			if stmt.Schema != nil {
@@ -208,11 +188,6 @@ func (m Migrator) CreateTable(values ...interface{}) (err error) {
 							return err
 						}
 					}
-					// if err := m.DB.Exec(
-					// 	"CREATE SEQUENCE IF NOT EXISTS ?",
-					// 	m.CurrentTable(stmt)).Error; err != nil {
-					// 	return err
-					// }
 				}
 			}
 			return nil
@@ -381,8 +356,9 @@ func (m Migrator) MigrateColumn(value interface{}, field *schema.Field, columnTy
 	})
 }
 
-// TODO: Implement below function.
-// AlterColumn(dst interface{}, field string) error
+func (m Migrator) AlterColumn(value interface{}, field string) error {
+	return ErrDuckDBNotSupported
+}
 
 func (m Migrator) HasColumn(value interface{}, field string) bool {
 	var count int64
