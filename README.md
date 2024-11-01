@@ -18,8 +18,6 @@
 
 ---
 
-#### 🚧 This repo is under **heavy development** and is considered non-stable. It should only be used in production once it becomes stable. 🚨
-
 ## Quick Start
 
 ```go
@@ -28,10 +26,13 @@ import (
   "gorm.io/gorm"
 )
 
+// DO NOT use 'gorm.Model' here. See 'Limitations' for more.
 type Product struct {
-	gorm.Model
-	Code  string
-	Price uint
+	ID        uint `gorm:"primarykey"`
+	Code      string
+	Price     uint
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 func main() {
@@ -46,10 +47,55 @@ func main() {
 
 	// Create
 	db.Create(&Product{Code: "D42", Price: 100})
+
+  // Read
+	var product Product
+	db.First(&product, 1)                 // find product with integer primary key
+	db.First(&product, "code = ?", "D42") // find product with code D42
+
+	// Update - update product's price to 200
+	db.Model(&product).Update("Price", 200)
+	// Update - update multiple fields
+	db.Model(&product).Updates(Product{Price: 200, Code: "F42"}) // non-zero fields
+	db.Model(&product).Updates(map[string]interface{}{"Price": 200, "Code": "F42"})
+
+	// Delete - delete product
+	db.Delete(&product, 1)
 }
 ```
 
 Checkout [https://gorm.io](https://gorm.io) for details.
+
+
+## Limitations
+
+DuckDB has two index types:
+
+- Min-Max (Zonemap)
+- [Adaptive Radix Tree](https://db.in.tum.de/~leis/papers/ART.pdf)
+In DuckDB, ART indexes are automatically created for columns with a `UNIQUE` or `PRIMARY KEY` constraint and can be defined using `CREATE INDEX`.
+
+However, every technology has its pros and cons. Despite being helpful (read attached pdf), ART indexes have some limitations.
+
+ART indexes create a secondary copy of the data in a second location – this complicates processing, particularly when combined with transactions. Certain limitations apply when it comes to modifying data stored in secondary indexes.
+
+Due to the presence of transactions, data can only be removed from the index after the transaction that performed the delete is committed and no further transactions that refer to the old entry are still present in the index. As a result, transactions that perform deletions followed by insertions may trigger unexpected, unique constraint violations, as the deleted tuple has not yet been removed from the index. For example:
+
+GORM will update the `deleted_at` column when you perform a `db.Delete()`. so your `db.Delete()` will be translate to:
+
+```sql
+UPDATE products SET deleted_at='2024-11-01 12:06:00.942' WHERE products.id = 1 AND products.deleted_at IS NULL;
+```
+
+And it cause an error:
+
+```bash
+Constraint Error: Duplicate key "id: 1" violates primary key constraint. If this is an unexpected constraint violation please double check with the known index limitations section in our documentation (https://duckdb.org/docs/sql/indexes).
+```
+
+That is why you should not use the default `gorm.Model` structure and manually use `ID`, `CreatedAt` and `UpdatedAt`.
+
+For more info, see [DuckDB documentations](https://duckdb.org/docs/sql/constraints#primary-key-and-unique-constraint).
 
 <!-- CONTRIBUTING -->
 
@@ -65,6 +111,13 @@ with the tag "enhancement."
 3) Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4) Push to the Branch (`git push origin feature/AmazingFeature`)
 5) Open a Pull Request
+
+### Roadmap
+
+- [ ]: Support switch indexes between ART and Min-Max in the configuraion.
+- [ ]: Implement TODO functions:
+	- ColumnTypes
+	- CreateConstraint
 
 <!-- LICENSE -->
 
