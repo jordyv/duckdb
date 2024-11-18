@@ -14,6 +14,28 @@ import (
 
 var ErrDuckDBNotSupported = errors.New("DuckDB are not supported this operation")
 
+var typeAliasMap = map[string][]string{
+	"int":                      {"integer"},
+	"int2":                     {"smallint"},
+	"int4":                     {"integer"},
+	"int8":                     {"bigint"},
+	"smallint":                 {"int2"},
+	"integer":                  {"int4"},
+	"bigint":                   {"int8"},
+	"decimal":                  {"numeric"},
+	"numeric":                  {"decimal"},
+	"timestamptz":              {"timestamp with time zone"},
+	"timestamp with time zone": {"timestamptz"},
+	"bool":                     {"boolean"},
+	"boolean":                  {"bool"},
+	"bit":                      {"bitstring"},
+	"char":                     {"character"},
+	"varchar":                  {"character varying"},
+	"float4":                   {"real"},
+	"float8":                   {"double"},
+	"blob":                     {"binary"},
+}
+
 type Migrator struct {
 	migrator.Migrator
 }
@@ -37,6 +59,10 @@ func (m Migrator) FullDataTypeOf(field *schema.Field) clause.Expr {
 	}
 
 	return expr
+}
+
+func (m Migrator) GetTypeAliases(databaseTypeName string) []string {
+	return typeAliasMap[databaseTypeName]
 }
 
 // Tables

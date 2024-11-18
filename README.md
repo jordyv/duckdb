@@ -69,6 +69,8 @@ Checkout [https://gorm.io](https://gorm.io) for details.
 
 ## Limitations
 
+#### `deleted_at` field.
+
 DuckDB has two index types:
 
 - Min-Max (Zonemap)
@@ -96,6 +98,20 @@ Constraint Error: Duplicate key "id: 1" violates primary key constraint. If this
 That is why you should not use the default `gorm.Model` structure and manually use `ID`, `CreatedAt` and `UpdatedAt`.
 
 For more info, see [DuckDB documentations](https://duckdb.org/docs/sql/constraints#primary-key-and-unique-constraint).
+
+---
+
+#### JSONB
+
+DuckDB doesn't support JSONB schema yet, so whenever you use `gorm:"type:jsonb"`, it will translate it to `gorm:"type:json"` under the hood.
+
+Why did I add this?
+
+Because in a couple of projects that I was contributing to, this type was being used in GORM drivers, so I added this small thing to avoid facing the below error:
+
+```bash
+Catalogue Error: Type with name jsonb does not exist!
+```
 
 <!-- CONTRIBUTING -->
 

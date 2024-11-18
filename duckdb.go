@@ -170,6 +170,9 @@ func (dialector Dialector) DataTypeOf(field *schema.Field) string {
 	case schema.Bytes:
 		return "blob"
 	default:
+		if field.Tag.Get("gorm") == "type:jsonb" {
+			return "json"
+		}
 		return dialector.getSchemaCustomType(field)
 	}
 }
