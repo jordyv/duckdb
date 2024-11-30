@@ -111,7 +111,8 @@ func (m Migrator) CreateTable(values ...interface{}) (err error) {
 				field := stmt.Schema.FieldsByDBName[dbName]
 				if !field.IgnoreMigration {
 					if dbName == "id" {
-						s := "{products  %!s(bool=false)}"
+						// s := fmt.Sprintf("{%s  %!s(bool=false)}", m.CurrentTable(stmt).(clause.Table).Name)
+						s := "{" + m.CurrentTable(stmt).(clause.Table).Name + "  %!s(bool=false)}"
 						re := regexp.MustCompile(`\{([^ ]+)`)
 						match := re.FindStringSubmatch(s)
 						pk := fmt.Sprintf("? ? DEFAULT nextval('%s')", match[1])
