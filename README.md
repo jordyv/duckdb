@@ -127,6 +127,7 @@ See [here](https://github.com/alifiroozi80/duckdb/blob/main/CONTRIBUTING.md) for
 - [ ] Implement TODO functions:
 	- ColumnTypes
 	- CreateConstraint
+- [ ] Support `sequence` for each field that needs auto-increment (See [here](https://github.com/alifiroozi80/duckdb/issues/1)).
 
 <!-- LICENSE -->
 
