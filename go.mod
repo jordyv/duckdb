@@ -1,4 +1,4 @@
-module github.com/alifiroozi80/duckdb
+module github.com/jordyv/duckdb
 
 go 1.24
 
